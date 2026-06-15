@@ -232,10 +232,12 @@ impl IdracState {
 
         let job = Job {
             job_id: job_id.clone(),
+            // Real iDRAC flow: a freshly created config job is Scheduled (staged);
+            // it transitions to Completed on the next power-on (BmcEvent::PowerOn).
             job_state: JobState::Scheduled,
             job_type: DELL_JOB_TYPE.to_string(),
             start_time: chrono::offset::Utc::now(),
-            end_time: None,
+            end_time: Some(chrono::offset::Utc::now()),
         };
 
         jobs.insert(job_id.clone(), job);

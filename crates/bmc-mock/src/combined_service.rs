@@ -74,7 +74,11 @@ impl Service<axum::http::Request<Incoming>> for CombinedService {
 
         let routers = self.routers.clone();
         Box::pin(async move {
-            let Some(mut router) = routers.read().await.get(&forwarded_host).cloned() else {
+            let maybe_router = {
+                let r = routers.read().await;
+                r.get(&forwarded_host).cloned().or_else(|| r.get("").cloned())
+            };
+            let Some(mut router) = maybe_router else {
                 let err = format!("no router configured for host: {forwarded_host}");
                 tracing::info!("{err}");
                 return Ok(Response::builder()

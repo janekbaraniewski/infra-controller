@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+FROM build-container-localdev AS builder
+ENV CARGO_HOME=/cargo-home
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+ENV CARGO_TARGET_DIR=/cargo-target
+WORKDIR /workspace
+COPY . .
+RUN --mount=type=cache,id=nico-devspace-cargo-home,target=/cargo-home,sharing=locked \
+    --mount=type=cache,id=nico-devspace-cargo-target,target=/cargo-target,sharing=locked \
+    cargo build -p carbide-api --bin carbide-api -p carbide-admin-cli --bin carbide-admin-cli -p carbide-pxe --bin carbide --locked && \
+    cargo build -p carbide-dhcp --lib --locked && \
+    mkdir -p /artifacts && \
+    cp /cargo-target/debug/carbide-api /cargo-target/debug/carbide-admin-cli /cargo-target/debug/carbide /artifacts/ && \
+    cp /cargo-target/debug/libdhcp.so /artifacts/
+
+FROM debian:12-slim
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
+      ca-certificates curl ipmitool iproute2 iputils-ping \
+      kea-dhcp4-server kea-ctrl-agent \
+      libaio1 libc-ares2 libssh-4 libudev1 nginx openssh-client tpm2-tools zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/carbide /var/run/kea /var/lib/kea /usr/lib/x86_64-linux-gnu/kea/hooks
+COPY --from=builder /artifacts/carbide-api       /opt/carbide/carbide-api
+COPY --from=builder /artifacts/carbide-admin-cli /opt/carbide/carbide-admin-cli
+COPY --from=builder /artifacts/carbide           /opt/carbide/carbide
+COPY --from=builder /artifacts/libdhcp.so        /usr/lib/x86_64-linux-gnu/kea/hooks/libdhcp.so
+COPY crates/api/casbin-policy.csv                /opt/carbide/casbin-policy.csv
+ENV CASBIN_POLICY_FILE=/opt/carbide/casbin-policy.csv

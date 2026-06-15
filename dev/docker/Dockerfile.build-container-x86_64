@@ -82,9 +82,11 @@ RUN rustup component add --toolchain ${RUST_NIGHTLY} rustfmt rust-src rustc-dev 
 # The mdbook crates need to be installed with matching version numbers
 # in order to be compatible
 # They need to be installed without --locked to avoid build failures
-RUN cargo install cargo-cache cargo-make sccache cargo-watch taplo-cli cargo-deny --locked && \
-	cargo install mdbook@0.4.52 mdbook-plantuml@0.8.0 mdbook-mermaid@0.16.2 && \
-	cargo cache -r registry-index,registry-sources
+# G22 (test build): the runtime image builds (Dockerfile.api/bmc-proxy/machine-a-tron)
+# only run `cargo build -p <bin>` and need NONE of cargo-make/cargo-deny/cargo-watch/
+# taplo-cli/mdbook* (those are CI lint + docs tooling). Compiling them from source
+# added ~10-15min of pure waste per build-container. Skip them for the e2e stack.
+RUN true
 
 # install stuff that's not in debian
 RUN curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh

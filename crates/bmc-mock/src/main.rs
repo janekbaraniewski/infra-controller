@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#![allow(dead_code, unused_imports)]
 mod command_line;
 mod tar_router;
 
@@ -91,7 +92,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_host_mock()
     };
 
-    routers_by_ip.insert("".to_owned(), router);
+    // FLEET: no default fallback — only explicit per-VM BMC IPs respond, so site-explorer
+    // discovers exactly the fleet BMCs (not the same phantom host at every scanned IP).
+    let _ = router; // keep default router built but unused
+    // routers_by_ip.insert("".to_owned(), router);
+
+    // FLEET: per-VM BMC routers keyed by static BMC IP; each drives its libvirt domain.
+    // Read from --fleet-config JSON if provided (scales without recompiling);
+    // otherwise fall back to the built-in 3-machine fleet.
+    #[derive(serde::Deserialize)]
+    struct FleetEntry { bmc_ip: String, domain: String, mac: String, bmc_mac: String, serial: String }
+    let fleet: Vec<FleetEntry> = if let Some(path) = args.fleet_config.as_ref() {
+        let data = std::fs::read_to_string(path).expect("read --fleet-config file");
+        let v: Vec<FleetEntry> = serde_json::from_str(&data).expect("parse --fleet-config JSON");
+        info!("loaded {} fleet entries from {:?}", v.len(), path);
+        v
+    } else {
+        vec![
+            FleetEntry { bmc_ip: "192.168.192.21".into(), domain: "ManagedHost".into(), mac: "52:54:00:ab:cd:01".into(), bmc_mac: "52:54:00:ff:ff:01".into(), serial: "NICOVM0001".into() },
+            FleetEntry { bmc_ip: "192.168.192.22".into(), domain: "fleet-vm-2".into(),  mac: "52:54:00:ab:cd:02".into(), bmc_mac: "52:54:00:ff:ff:02".into(), serial: "NICOVM0002".into() },
+            FleetEntry { bmc_ip: "192.168.192.23".into(), domain: "fleet-vm-3".into(),  mac: "52:54:00:ab:cd:03".into(), bmc_mac: "52:54:00:ff:ff:03".into(), serial: "NICOVM0003".into() },
+        ]
+    };
+    for e in &fleet {
+        let cb: Arc<dyn Callbacks> = Arc::new(VirshCallbacks::new(&e.domain));
+        let mut h = HostMachineInfo::new(HostHardwareType::DellPowerEdgeR750, vec![]);
+        h.non_dpu_mac_address = Some(e.mac.parse().unwrap());
+        h.bmc_mac_address = e.bmc_mac.parse().unwrap();
+        h.serial = e.serial.clone();
+        let r = bmc_mock::machine_router(MachineInfo::Host(h), cb, String::default(), false).0;
+        routers_by_ip.insert(e.bmc_ip.clone(), r);
+        info!("fleet BMC router: {} -> domain {}", e.bmc_ip, e.domain);
+    }
+
 
     let server_config = bmc_mock::tls::server_config(args.cert_path)?;
     let mut handle = bmc_mock::CombinedServer::run(
@@ -152,19 +185,97 @@ fn spawn_qemu_reboot_handler() -> mpsc::UnboundedSender<BmcCommand> {
     command_tx
 }
 
+#[derive(Debug)]
+struct VirshCallbacks { domain: String }
+impl VirshCallbacks {
+    fn new(domain: &str) -> Self { Self { domain: domain.to_string() } }
+    fn run_virsh(&self, c: SystemPowerControl, args: &[&str]) {
+        tracing::info!("VirshCallbacks: {:?} -> virsh {:?}", c, args);
+        let _ = Command::new("virsh").args(args).output();
+    }
+}
+impl Callbacks for VirshCallbacks {
+    fn get_power_state(&self) -> MockPowerState {
+        match Command::new("virsh").arg("domstate").arg(&self.domain).output() {
+            Ok(o) => {
+                let st = String::from_utf8_lossy(&o.stdout);
+                if st.contains("shut off") || st.contains("crashed") { MockPowerState::Off }
+                else { MockPowerState::On }
+            }
+            Err(_) => MockPowerState::On,
+        }
+    }
+    fn send_power_command(&self, c: SystemPowerControl) -> Result<(), SetSystemPowerError> {
+        use SystemPowerControl as C;
+        let running = matches!(self.get_power_state(), MockPowerState::On);
+        let d = self.domain.as_str();
+        // For boot-causing restarts we must COLD boot (destroy + start) rather than
+        // `virsh reset`. `virsh reset` keeps the already-running domain definition and
+        // does NOT re-read the persistent XML, so a boot-order change applied via
+        // set_boot_device() would be ignored. destroy+start forces libvirt to re-read
+        // the persistent <os> boot order, so the boot device the BMC selected actually
+        // takes effect. This mirrors how a real reset applies the staged boot override.
+        match c {
+            C::On | C::ForceOn => self.run_virsh(c, &["start", d]),
+            C::GracefulShutdown => self.run_virsh(c, &["shutdown", d]),
+            C::ForceOff => self.run_virsh(c, &["destroy", d]),
+            C::ForceRestart | C::PowerCycle | C::GracefulRestart => {
+                if running {
+                    self.run_virsh(c, &["destroy", d]);
+                }
+                self.run_virsh(c, &["start", d]);
+            }
+            _ => {
+                if running {
+                    self.run_virsh(c, &["destroy", d]);
+                    self.run_virsh(c, &["start", d]);
+                } else {
+                    self.run_virsh(c, &["start", d]);
+                }
+            }
+        }
+        Ok(())
+    }
+    fn set_boot_device(&self, dev: bmc_mock::BootOptionKind) {
+        use bmc_mock::BootOptionKind as K;
+        // Rewrite the domain's persistent <os> boot order so the NEXT cold boot uses
+        // the device the BMC selected. virt-xml --edit --boot rewrites <boot dev=.../>
+        // in the persistent config; the subsequent destroy+start (see send_power_command)
+        // makes libvirt honor it. The non-selected device is kept as a fallback so a
+        // failed PXE attempt still eventually boots from disk, matching firmware order.
+        let order = match dev {
+            K::Network => "network,hd",
+            K::Disk => "hd,network",
+        };
+        let d = self.domain.as_str();
+        tracing::info!(
+            "VirshCallbacks: set_boot_device {:?} -> virt-xml {} --edit --boot {}",
+            dev, d, order
+        );
+        let out = Command::new("virt-xml")
+            .args([d, "--edit", "--boot", order])
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => tracing::error!(
+                "virt-xml boot-order edit failed for {}: stdout={} stderr={}",
+                d,
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            ),
+            Err(e) => tracing::error!("failed to exec virt-xml for {}: {}", d, e),
+        }
+    }
+    fn state_refresh_indication(&self) {}
+}
+
 fn default_host_mock() -> Router {
-    let command_channel = spawn_qemu_reboot_handler();
-    let callbacks = Arc::new(ChannelCallbacks::new(command_channel));
-    bmc_mock::machine_router(
-        MachineInfo::Host(HostMachineInfo::new(
-            HostHardwareType::WiwynnGB200Nvl,
-            vec![DpuMachineInfo::default(), DpuMachineInfo::default()],
-        )),
-        callbacks,
-        String::default(),
-        false,
-    )
-    .0
+    let callbacks: Arc<dyn Callbacks> = Arc::new(VirshCallbacks::new("ManagedHost"));
+    let mut host = HostMachineInfo::new(HostHardwareType::DellPowerEdgeR750, vec![]);
+    host.non_dpu_mac_address = Some("52:54:00:ab:cd:01".parse().unwrap());
+    host.bmc_mac_address = "52:54:00:ff:ff:01".parse().unwrap();
+    host.serial = "NICOVM0001".to_string();
+    bmc_mock::machine_router(MachineInfo::Host(host), callbacks, String::default(), false).0
 }
 
 #[derive(Debug)]

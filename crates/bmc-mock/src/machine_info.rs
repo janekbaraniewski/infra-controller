@@ -384,9 +384,15 @@ impl HostMachineInfo {
             bmc_mac_address: self.bmc_mac_address,
             product_serial_number: Cow::Borrowed(&self.serial),
             nics,
-            embedded_nic: hw::dell_poweredge_r750::EmbeddedNic {
-                port_1: next_mac(),
-                port_2: next_mac(),
+            embedded_nic: {
+                // Deterministic embedded-NIC MACs in this host's own MAC space
+                // (derived from non_dpu_mac_address) to avoid colliding with the
+                // global next_mac() 02:01:00:00:00:xx pool used by machine-a-tron.
+                let base = self.non_dpu_mac_address.map(|m| m.bytes()).unwrap_or([0x52,0x54,0x00,0xee,0xee,0x00]);
+                let mk = |last: u8| {
+                    let mut b = base; b[3]=0xee; b[4]=0xee; b[5]=last; MacAddress::from(b)
+                };
+                hw::dell_poweredge_r750::EmbeddedNic { port_1: mk(base[5]), port_2: mk(base[5].wrapping_add(0x80)) }
             },
         }
     }

@@ -1,0 +1,19 @@
+global:
+  image:
+    repository: nico-runtime
+    tag: dev
+    pullPolicy: IfNotPresent
+nico-bmc-proxy:
+  image:
+    repository: nico-bmc-proxy
+    tag: ptYOhRD
+    pullPolicy: IfNotPresent
+nico-dhcp:
+  enabled: true
+nico-pxe:
+  enabled: true
+  bootArtifactContainers:
+    - name: boot-artifacts
+      image: boot-artifacts-x86_64:dev
+      imagePullPolicy: IfNotPresent
+      command: ["sh","-c","cp -r /artifacts/blobs/internal/x86_64 /boot-artifacts/blobs/internal/"]

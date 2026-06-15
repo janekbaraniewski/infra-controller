@@ -26,7 +26,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use serde_json::json;
 
-use crate::bmc_state::BmcState;
+use crate::bmc_state::{BmcState, BmcEvent};
 use crate::json::{JsonExt, JsonPatch, json_patch};
 use crate::redfish::Builder;
 use crate::{
@@ -220,6 +220,14 @@ impl SystemState {
         self.systems
             .iter()
             .find_map(|system| system.resolve_current_boot_selection())
+    }
+
+    /// Emulate iDRAC one-time PXE semantics: after a boot override marked `Once`
+    /// has been honored for a boot, revert it to `Disabled` so the following boot
+    /// falls back to the persistent boot order (disk). Mirrors real hardware,
+    /// where a one-time PXE override self-clears after a single boot.
+    pub fn consume_one_time_override(&self) {
+        self.systems.iter().for_each(|s| s.on_boot_completed())
     }
 
     pub fn on_boot_completed(&self) {
@@ -567,8 +575,43 @@ async fn post_reset_system(
     // introduce a deadlock if the API server holds a lock on the row for this machine
     // while issuing a redfish call, and MachineStateMachine is blocked waiting for the row lock
     // to be released.
+    // Honor the stored Redfish boot-source override on the underlying machine
+    // BEFORE issuing the power command, but only for reset types that cause a
+    // boot. NICo/forge images real hardware by setting a one-time PXE override
+    // and then resetting; the mock must translate that into the domain actually
+    // booting from the network, otherwise the domain just follows its static
+    // libvirt boot order.
+    {
+        use crate::SystemPowerControl as PC;
+        if matches!(
+            reset_type,
+            PC::On | PC::ForceOn | PC::GracefulRestart | PC::ForceRestart | PC::PowerCycle
+        ) {
+            if let Some(kind) = state.system_state.resolve_current_boot_selection() {
+                tracing::info!(
+                    "post_reset_system: applying resolved boot selection {:?} before {:?}",
+                    kind,
+                    reset_type
+                );
+                callbacks.set_boot_device(kind);
+            }
+            // Emulate iDRAC one-time PXE: clear a `Once` override now that it has
+            // been honored, so the next boot reverts to disk.
+            state.system_state.consume_one_time_override();
+        }
+    }
+
     match callbacks.set_power_state(reset_type) {
-        Ok(_) => json!({}).into_ok_response(),
+        Ok(_) => {
+            // Power-on / restart applies pending Dell BIOS config jobs (real iDRAC
+            // applies staged BIOS settings on the next reboot). Fire PowerOn so the
+            // machine advances past waitforbiosjobcompletion.
+            use crate::SystemPowerControl as PC;
+            if matches!(reset_type, PC::On | PC::ForceOn | PC::GracefulRestart | PC::ForceRestart | PC::PowerCycle) {
+                state.on_event(&BmcEvent::PowerOn);
+            }
+            json!({}).into_ok_response()
+        }
         Err(SetSystemPowerError::BadRequest(_)) => StatusCode::BAD_REQUEST.into_response(),
         Err(SetSystemPowerError::CommandSendError(_)) => {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()

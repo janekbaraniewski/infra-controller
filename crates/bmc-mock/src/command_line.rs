@@ -58,6 +58,12 @@ pub struct Args {
         help = "An ip_address and .tar.gz file pair (comma separated).\nThe file is an archive of redfish data when the request is forwarded to a specific IP address.\nRepeat for different machines"
     )]
     pub ip_router: Option<Vec<IpRouterPair>>,
+
+    #[clap(
+        long,
+        help = "Path to a JSON array of {bmc_ip,domain,mac,bmc_mac,serial} fleet entries. Overrides the built-in 3-machine fleet so the BMC fleet scales without recompiling."
+    )]
+    pub fleet_config: Option<std::path::PathBuf>,
 }
 
 pub fn parse_args() -> Args {

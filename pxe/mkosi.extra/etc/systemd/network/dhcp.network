@@ -1,8 +1,9 @@
 [Match]
-Name=enp* enP*
+Name=en* eth*
 
 [Network]
 DHCP=yes
+Domains=~cluster.local
 
 [DHCP]
 ClientIdentifier=mac

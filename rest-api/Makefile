@@ -1,9 +1,21 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-.PHONY: test postgres-up postgres-down ensure-postgres postgres-wait clean check-source-headers fix-source-headers
+.PHONY: test postgres-up postgres-down ensure-postgres postgres-wait clean check-source-headers
 .PHONY: build docker-build docker-build-local
-.PHONY: test-ipam test-site-agent test-site-manager test-workflow test-db test-api test-auth test-common test-cert-manager test-site-workflow test-flow test-powershelf-manager test-nvswitch-manager migrate core-mock-server-build core-mock-server-start core-mock-server-stop flow-mock-server-build flow-mock-server-start flow-mock-server-stop
+.PHONY: test-ipam test-site-agent test-site-manager test-workflow test-db test-api test-auth test-common test-cert-manager test-site-workflow test-flow test-powershelf-manager test-nvswitch-manager migrate nico-mock-server-build nico-mock-server-start nico-mock-server-stop flow-mock-server-build flow-mock-server-start flow-mock-server-stop
 .PHONY: validate-openapi preview-openapi generate-client
 .PHONY: pre-commit-install pre-commit-run pre-commit-update
 
@@ -29,6 +41,17 @@ MCP_CHART := ../helm/rest/nico-mcp
 HELM_SET := --set global.image.repository=$(IMAGE_REGISTRY) \
 	--set global.image.tag=$(IMAGE_TAG) \
 	--set global.image.pullPolicy=Never
+
+# Local-dev overrides for the site-agent chart. The default chart values point
+# at a production NICo Core (nico-api.nico-system.svc:1079 with TLS); for the
+# kind/mock-core flow these are wrong. Point the site-agent at the mock-core
+# service deployed by `make kind-reset` and disable TLS — mock-core listens
+# plain TCP on 11079.
+HELM_SET_SITE_AGENT := --set envConfig.NICO_ADDRESS=nico-rest-mock-core.nico-rest.svc.cluster.local:11079 \
+	--set envConfig.NICO_SEC_OPT=0
+# ENABLE_TLS stays true (chart default). It controls Temporal mTLS, not NICo —
+# NICo plain gRPC is selected via NICO_SEC_OPT=0 above. Setting ENABLE_TLS=false
+# breaks the site-agent's Temporal client (server preface EOF).
 
 HELM_SET_KEYCLOAK := --set nico-rest-api.config.keycloak.enabled=true \
 	--set nico-rest-api.config.keycloak.baseURL=http://keycloak:8082 \
@@ -59,7 +82,7 @@ postgres-down:
 clean:
 	@echo "Cleaning up test resources..."
 	-$(MAKE) postgres-down
-	-$(MAKE) core-mock-server-stop
+	-$(MAKE) nico-mock-server-stop
 	-$(MAKE) flow-mock-server-stop
 	@echo "Stopping kind cluster..."
 	-$(MAKE) kind-down
@@ -73,9 +96,6 @@ clean:
 
 check-source-headers:
 	python3 scripts/check_source_headers.py
-
-fix-source-headers:
-	python3 scripts/check_source_headers.py --fix
 
 ensure-postgres:
 	@docker inspect $(POSTGRES_CONTAINER_NAME) > /dev/null 2>&1 || $(MAKE) postgres-up
@@ -123,11 +143,11 @@ test-db:
 	$(MAKE) ensure-postgres
 	cd db && go test -p 1 ./... -count=1
 
-core-mock-server-build:
+nico-mock-server-build:
 	mkdir -p build
 	cd site-agent/cmd/mock-core && go build -o ../../../build/mock-core .
 
-core-mock-server-start: core-mock-server-build
+nico-mock-server-start: nico-mock-server-build
 	-lsof -ti:11079 | xargs kill -9 2>/dev/null
 	./build/mock-core -tout 0 > build/mock-core.log 2>&1 & echo $$! > build/mock-core.pid
 	@echo "Waiting for gRPC server to start..."
@@ -142,7 +162,7 @@ core-mock-server-start: core-mock-server-build
 	echo "Timeout waiting for Mock Core gRPC server to start"; \
 	exit 1
 
-core-mock-server-stop:
+nico-mock-server-stop:
 	-kill $$(cat build/mock-core.pid) 2>/dev/null
 	-rm -f build/mock-core.pid
 
@@ -169,9 +189,9 @@ flow-mock-server-stop:
 	-kill $$(cat build/mock-flow.pid) 2>/dev/null
 	-rm -f build/mock-flow.pid
 
-test-site-agent: core-mock-server-start flow-mock-server-start
+test-site-agent: nico-mock-server-start flow-mock-server-start
 	cd site-agent/pkg/components && CGO_ENABLED=1 go test -race -p 1 ./... -count=1 ; \
-	ret=$$? ; cd ../../.. && $(MAKE) core-mock-server-stop flow-mock-server-stop ; exit $$ret
+	ret=$$? ; cd ../../.. && $(MAKE) nico-mock-server-stop flow-mock-server-stop ; exit $$ret
 
 test-api:
 	$(MAKE) ensure-postgres
@@ -266,13 +286,22 @@ core-proto-clean:
 	rm -rf workflow-schema/site-agent/workflows/v1/*_nico.proto
 	rm -rf workflow-schema/schema/site-agent/workflows/v1/*.pb.go
 
+core-proto-repo ?= NVIDIA/infra-controller-core
+core-proto-repo-ssh:=ssh://git@github.com/$(core-proto-repo).git
+core-proto-ref ?= origin/main
 core-proto-fetch:
-	@for file in ../crates/rpc/proto/*.proto; do \
+	@echo "Fetching Core protobuf files from $(core-proto-repo-ssh) at $(core-proto-ref). Customize with make core-proto-repo=your-repo core-proto-ref=your-ref"
+	if [ -d "nico-core" ]; then rm -rf nico-core; fi
+	git clone $(core-proto-repo-ssh) nico-core;
+	cd nico-core && git fetch $(core-proto-repo-ssh) && git reset --hard $(core-proto-ref);
+	ls nico-core/crates/rpc/proto
+	@for file in nico-core/crates/rpc/proto/*.proto; do \
 		cp "$$file" "workflow-schema/site-agent/workflows/v1/$$(basename "$$file" .proto)_nico.proto"; \
 		echo "Copied: $$file"; \
 	done
 	mv workflow-schema/site-agent/workflows/v1/forge_nico.proto workflow-schema/site-agent/workflows/v1/nico_nico.proto
 	echo "Successfully copied Core protobuf files"
+	rm -rf nico-core
 
 core-proto-fmt:
 	@echo "Formatting Core protobuf files"
@@ -284,12 +313,12 @@ core-protogen:
 	go fmt ./...
 
 flow-proto:
-	FLOW_DIR=flow; \
+	FLOW_DIR=flow \
 	ls "$${FLOW_DIR}/proto/v1"; \
 	for file in "$${FLOW_DIR}"/proto/v1/*.proto; do \
 		cp "$$file" "workflow-schema/flow/proto/v1/"; \
 		echo "Copied: $$file"; \
-		./workflow-schema/scripts/add-go-package-option.sh "workflow-schema/flow/proto/v1/$$(basename "$$file")" "github.com/NVIDIA/infra-controller/rest-api/workflow-schema/flow"; \
+		./workflow-schema/scripts/add-go-package-option.sh "workflow-schema/flow/proto/v1/$$(basename "$$file")" "github.com/NVIDIA/infra-controller-rest/workflow-schema/flow"; \
 	done
 
 flow-protogen:
@@ -599,7 +628,7 @@ helm-deploy:
 helm-deploy-site-agent:
 	@echo "Installing site-agent chart (will CrashLoop until bootstrapped)..."
 	helm upgrade --install nico-rest-site-agent $(SITE_AGENT_CHART)/ \
-		--namespace nico-rest $(HELM_SET) --timeout 1m || true
+		--namespace nico-rest $(HELM_SET) $(HELM_SET_SITE_AGENT) --timeout 1m || true
 	@echo "Running site bootstrap (setup-local.sh site-agent)..."
 	./scripts/setup-local.sh site-agent
 	@echo "Waiting for site-agent to stabilize..."
@@ -710,7 +739,7 @@ generate-sdk:
 
 # Validate OpenAPI spec using Redocly CLI (Docker)
 lint-openapi:
-	npx @redocly/cli lint --skip-rule=no-ambiguous-paths ./openapi/spec.yaml
+	npx @redocly/cli lint ./openapi/spec.yaml
 
 # Preview OpenAPI spec in Redoc UI (Docker)
 preview-openapi:

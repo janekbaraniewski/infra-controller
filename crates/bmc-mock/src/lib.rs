@@ -165,6 +165,12 @@ pub trait Callbacks: std::fmt::Debug + Send + Sync {
         self.send_power_command(reset_type)
     }
 
+    /// Apply a Redfish boot-source override to the underlying machine so that the
+    /// NEXT boot uses the requested device. Default is a no-op so that callback
+    /// implementations that do not back a real domain (channel/test mocks) keep
+    /// compiling and behaving as before.
+    fn set_boot_device(&self, _dev: BootOptionKind) {}
+
     fn state_refresh_indication(&self);
 }
 

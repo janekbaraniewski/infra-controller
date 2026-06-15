@@ -20,5 +20,5 @@
 set base-url {{ static_pxe_url }}/public/blobs/
 set cloudinit-url {{ pxe_url }}/api/v0/cloud-init/
 
-{{ ipxe }}
+{{ ipxe | replace(from="cli_cmd=auto-detect", to="newrootfs=http://172.18.0.2:8080/public/blobs/internal/x86_64/scout.squashfs cli_cmd=auto-detect") | replace(from="image_url=", to="image_disk=/dev/vda image_url=") }}
 
