@@ -41,6 +41,17 @@ HELM_SET := --set global.image.repository=$(IMAGE_REGISTRY) \
 	--set global.image.tag=$(IMAGE_TAG) \
 	--set global.image.pullPolicy=Never
 
+# Local-dev overrides for the site-agent chart. The default chart values point
+# at a production NICo Core (nico-api.nico-system.svc:1079 with TLS); for the
+# kind/mock-core flow these are wrong. Point the site-agent at the mock-core
+# service deployed by `make kind-reset` and disable TLS — mock-core listens
+# plain TCP on 11079.
+HELM_SET_SITE_AGENT := --set envConfig.NICO_ADDRESS=nico-rest-mock-core.nico-rest.svc.cluster.local:11079 \
+	--set envConfig.NICO_SEC_OPT=0
+# ENABLE_TLS stays true (chart default). It controls Temporal mTLS, not NICo —
+# NICo plain gRPC is selected via NICO_SEC_OPT=0 above. Setting ENABLE_TLS=false
+# breaks the site-agent's Temporal client (server preface EOF).
+
 HELM_SET_KEYCLOAK := --set nico-rest-api.config.keycloak.enabled=true \
 	--set nico-rest-api.config.keycloak.baseURL=http://keycloak:8082 \
 	--set nico-rest-api.config.keycloak.externalBaseURL=http://localhost:8082 \
@@ -571,7 +582,7 @@ helm-deploy:
 helm-deploy-site-agent:
 	@echo "Installing site-agent chart (will CrashLoop until bootstrapped)..."
 	helm upgrade --install nico-rest-site-agent $(SITE_AGENT_CHART)/ \
-		--namespace nico-rest $(HELM_SET) --timeout 1m || true
+		--namespace nico-rest $(HELM_SET) $(HELM_SET_SITE_AGENT) --timeout 1m || true
 	@echo "Running site bootstrap (setup-local.sh site-agent)..."
 	./scripts/setup-local.sh site-agent
 	@echo "Waiting for site-agent to stabilize..."

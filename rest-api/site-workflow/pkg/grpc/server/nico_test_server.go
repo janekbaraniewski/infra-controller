@@ -53,6 +53,7 @@ var (
 type NICoServerImpl struct {
 	cwssaws.UnimplementedForgeServer
 	v   map[string]*cwssaws.Vpc
+	vp  map[string]*cwssaws.VpcPrefix
 	ns  map[string]*cwssaws.NetworkSegment
 	ins map[string]*cwssaws.Instance
 	m   map[string]*cwssaws.Machine
@@ -1288,6 +1289,69 @@ func (f *NICoServerImpl) LoadTestMachines() {
 	}
 }
 
+// CreateVpcPrefix implements interface NICoServer. The real Forge service
+// hands the request to the site agent which programs a network device; the
+// mock just records the prefix in memory and reports it Ready so the REST
+// API workflow completes without an Unimplemented gRPC error.
+func (f *NICoServerImpl) CreateVpcPrefix(c context.Context, req *cwssaws.VpcPrefixCreationRequest) (*cwssaws.VpcPrefix, error) {
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid request argument")
+	}
+
+	nid := uuid.NewString()
+	if req.Id != nil && req.Id.Value != "" {
+		nid = req.Id.Value
+	}
+
+	np := &cwssaws.VpcPrefix{
+		Id:       &cwssaws.VpcPrefixId{Value: nid},
+		Name:     req.Name,
+		Prefix:   req.Prefix,
+		VpcId:    req.VpcId,
+		Config:   req.Config,
+		Metadata: req.Metadata,
+	}
+	f.vp[nid] = np
+	return np, nil
+}
+
+// UpdateVpcPrefix implements interface NICoServer.
+func (f *NICoServerImpl) UpdateVpcPrefix(c context.Context, req *cwssaws.VpcPrefixUpdateRequest) (*cwssaws.VpcPrefix, error) {
+	if req == nil || req.Id == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid request argument")
+	}
+	np, ok := f.vp[req.Id.Value]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "VpcPrefix with ID %q not found", req.Id.Value)
+	}
+	return np, nil
+}
+
+// DeleteVpcPrefix implements interface NICoServer.
+func (f *NICoServerImpl) DeleteVpcPrefix(c context.Context, req *cwssaws.VpcPrefixDeletionRequest) (*cwssaws.VpcPrefixDeletionResult, error) {
+	if req == nil || req.Id == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid request argument")
+	}
+	if _, ok := f.vp[req.Id.Value]; ok {
+		delete(f.vp, req.Id.Value)
+	}
+	return &cwssaws.VpcPrefixDeletionResult{}, nil
+}
+
+// GetVpcPrefixes implements interface NICoServer.
+func (f *NICoServerImpl) GetVpcPrefixes(c context.Context, req *cwssaws.VpcPrefixGetRequest) (*cwssaws.VpcPrefixList, error) {
+	if req == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid request argument")
+	}
+	out := &cwssaws.VpcPrefixList{}
+	for _, id := range req.VpcPrefixIds {
+		if np, ok := f.vp[id.GetValue()]; ok {
+			out.VpcPrefixes = append(out.VpcPrefixes, np)
+		}
+	}
+	return out, nil
+}
+
 // NICoTest tests the grpc server
 func NICoTest(secs int) {
 	listener, err := net.Listen("tcp", DefaultPort)
@@ -1300,6 +1364,7 @@ func NICoTest(secs int) {
 
 	nicoServer := &NICoServerImpl{
 		v:   make(map[string]*cwssaws.Vpc),
+		vp:  make(map[string]*cwssaws.VpcPrefix),
 		ns:  make(map[string]*cwssaws.NetworkSegment),
 		ins: make(map[string]*cwssaws.Instance),
 		m:   make(map[string]*cwssaws.Machine),

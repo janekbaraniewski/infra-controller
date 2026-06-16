@@ -27,7 +27,7 @@ COPY . .
 
 RUN --mount=type=cache,id=nico-devspace-cargo-home,target=/cargo-home,sharing=locked \
   --mount=type=cache,id=nico-devspace-cargo-target,target=/cargo-target,sharing=locked \
-  cargo build -p carbide-bmc-proxy --bin carbide-bmc-proxy --locked && \
+  cargo build -p carbide-bmc-proxy --bin carbide-bmc-proxy && \
   mkdir -p /artifacts && \
   cp /cargo-target/debug/carbide-bmc-proxy /artifacts/carbide-bmc-proxy
 
