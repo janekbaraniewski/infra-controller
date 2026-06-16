@@ -69,6 +69,8 @@ service Forge {
   rpc FindNetworkSegmentIds(NetworkSegmentSearchFilter) returns (NetworkSegmentIdList);
   rpc FindNetworkSegmentsByIds(NetworkSegmentsByIdsRequest) returns (NetworkSegmentList);
   rpc CreateNetworkSegment(NetworkSegmentCreationRequest) returns (NetworkSegment);
+  // Binds (vpc_id set) or unbinds (vpc_id absent) a network segment to/from a VPC.
+  rpc SetNetworkSegmentVpc(SetNetworkSegmentVpcRequest) returns (NetworkSegment);
   rpc DeleteNetworkSegment(NetworkSegmentDeletionRequest) returns (NetworkSegmentDeletionResult);
   // TODO: This functionality should get integrated into NetworkSegmentSearchFilter
   rpc NetworkSegmentsForVpc(VpcSearchQuery) returns (NetworkSegmentList);
@@ -2369,6 +2371,14 @@ message NetworkSegmentCreationRequest {
   // a random ID.
   // The Network Segment ID must be unique within the Forge site.
   optional common.NetworkSegmentId id = 8;
+}
+
+// Binds or unbinds a network segment to/from a VPC.
+// When `vpc_id` is set, the segment is bound to that VPC (can_stretch=true).
+// When `vpc_id` is absent, the segment is unbound (vpc_id=NULL, can_stretch=false).
+message SetNetworkSegmentVpcRequest {
+  common.NetworkSegmentId network_segment_id = 1;
+  optional common.VpcId vpc_id = 2;
 }
 
 message NetworkSegmentDeletionRequest {

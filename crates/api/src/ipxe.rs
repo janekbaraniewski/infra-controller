@@ -514,11 +514,43 @@ exit ||
                             id: machine_id.to_string(),
                         })?;
 
+                    // Hands-off imaging (GAP 5a): for an OsImage instance we
+                    // want the imager to run on the FIRST boot (when the disk
+                    // has not been written yet) and then fall through to
+                    // boot-from-disk on subsequent boots, WITHOUT an operator
+                    // manually toggling `os_always_boot_with_ipxe`
+                    // (== run_provisioning_instructions_on_every_boot).
+                    //
+                    // The model exposes no explicit "OS already written to
+                    // disk" flag. The closest robust signal is
+                    // `observations.phone_home_last_contact`: once the freshly
+                    // imaged OS boots and phones home, this is set. We therefore
+                    // treat "OsImage assigned, phone-home enabled, and never
+                    // phoned home yet" as first-boot-with-unimaged-disk and run
+                    // the imager. After the first successful boot+phone-home,
+                    // `phone_home_last_contact` is Some(..) and we fall through
+                    // to boot-from-disk.
+                    //
+                    // CAVEAT (needs upstream decision): this auto-flip-back is
+                    // only reliable when `phone_home_enabled` is true. With
+                    // phone-home disabled there is no signal that the disk was
+                    // imaged, so we conservatively do NOT auto-image (the
+                    // existing operator-driven `os_always_boot_with_ipxe` /
+                    // `use_custom_pxe_on_boot` paths still work). A dedicated
+                    // "disk_imaged"/"booted_from_disk" instance field would make
+                    // this robust regardless of phone-home.
+                    let needs_first_boot_imaging = matches!(
+                        instance.config.os.variant,
+                        model::os::OperatingSystemVariant::OsImage(_)
+                    ) && instance.config.os.phone_home_enabled
+                        && instance.observations.phone_home_last_contact.is_none();
+
                     if instance
                         .config
                         .os
                         .run_provisioning_instructions_on_every_boot
                         || instance.use_custom_pxe_on_boot
+                        || needs_first_boot_imaging
                     {
                         // For non-always-PXE instances, clear the use_custom_pxe_on_boot flag
                         // now that we're serving the script. Always-PXE instances don't use
@@ -587,6 +619,13 @@ exit ||
                                     if let Some(x) = os_image.attributes.rootfs_label {
                                         qcow_imaging_ipxe += format!(" rootfs_label={x}").as_str();
                                     }
+                                    // GAP 5b: when boot_disk is unset we
+                                    // deliberately omit `image_disk=` so the
+                                    // imager's find_bootdisk() auto-detects the
+                                    // target (nvme0n1 / sda / vda). This keeps
+                                    // virtio (/dev/vda) hosts working without an
+                                    // explicit boot_disk; see
+                                    // pxe/common_files/disk_imaging.sh.
                                     if let Some(x) = os_image.attributes.boot_disk {
                                         qcow_imaging_ipxe += format!(" image_disk={x}").as_str();
                                     }

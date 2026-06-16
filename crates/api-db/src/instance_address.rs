@@ -174,7 +174,10 @@ fn validate(
         };
     }
 
-    if vpc_ids.len() != 1 && !all_fnn {
+    if vpc_ids.is_empty() {
+        return Err(ConfigValidationError::NoVpcAttachedToSegments.into());
+    }
+    if vpc_ids.len() > 1 && !all_fnn {
         return Err(ConfigValidationError::MultipleVpcFound.into());
     }
 

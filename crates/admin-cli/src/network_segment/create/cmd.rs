@@ -15,27 +15,18 @@
  * limitations under the License.
  */
 
-mod create;
-mod delete;
-mod show;
+use super::args::Args;
+use crate::cfg::runtime::RuntimeContext;
+use crate::errors::{CarbideCliError, CarbideCliResult};
 
-// Cross-module re-exports for jump module
-pub use show::args::Args as ShowNetworkSegment;
-pub use show::cmd::handle_show;
-
-#[cfg(test)]
-mod tests;
-
-use clap::Parser;
-
-use crate::cfg::dispatch::Dispatch;
-
-#[derive(Parser, Debug, Dispatch)]
-pub enum Cmd {
-    #[clap(about = "Display Network Segment information")]
-    Show(show::Args),
-    #[clap(about = "Create a Network Segment (e.g. a per-host HostInband segment)")]
-    Create(create::Args),
-    #[clap(about = "Delete Network Segment")]
-    Delete(delete::Args),
+pub async fn handle_create(args: Args, ctx: &mut RuntimeContext) -> CarbideCliResult<()> {
+    if !ctx.config.cloud_unsafe_op_enabled {
+        return Err(CarbideCliError::GenericError(
+            "Operation not allowed due to potential inconsistencies with cloud database."
+                .to_owned(),
+        ));
+    }
+    let segment = ctx.api_client.0.create_network_segment(args).await?;
+    println!("{segment:#?}");
+    Ok(())
 }

@@ -408,6 +408,13 @@ impl Forge for Api {
         crate::handlers::network_segment::create(self, request).await
     }
 
+    async fn set_network_segment_vpc(
+        &self,
+        request: Request<rpc::SetNetworkSegmentVpcRequest>,
+    ) -> Result<Response<rpc::NetworkSegment>, Status> {
+        crate::handlers::network_segment::set_vpc(self, request).await
+    }
+
     async fn delete_network_segment(
         &self,
         request: Request<rpc::NetworkSegmentDeletionRequest>,

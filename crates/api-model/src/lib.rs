@@ -115,6 +115,9 @@ pub enum ConfigValidationError {
     #[error("Found segments attached to multiple VPCs.")]
     MultipleVpcFound,
 
+    #[error("no network segment is bound to a VPC; a zero-DPU host needs a HostInband segment bound to a Flat VPC before an instance can be allocated")]
+    NoVpcAttachedToSegments,
+
     #[error("IP addresses / IP networks not configured for the same prefixes.")]
     NetworkPrefixAllocationMismatch,
 

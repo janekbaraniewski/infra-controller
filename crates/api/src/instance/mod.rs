@@ -933,6 +933,24 @@ pub async fn batch_allocate_instances(
                         vpc.network_virtualization_type,
                     )));
                 }
+
+                // Tenant scoping: the instance may only land in a VPC that
+                // belongs to its own tenant. A VPC with an empty
+                // tenant_organization_id is treated as unscoped/shared and is
+                // not rejected here.
+                let request_tenant = request.config.tenant.tenant_organization_id.as_str();
+                if !vpc.tenant_organization_id.is_empty()
+                    && vpc.tenant_organization_id != request_tenant
+                {
+                    return Err(CarbideError::FailedPrecondition(format!(
+                        "zero-DPU host {} has HostInband segment {} bound to VPC {} owned by tenant `{}`; instance for tenant `{}` cannot allocate into another tenant's VPC",
+                        mh_snapshot.host_snapshot.id,
+                        segment_id,
+                        vpc.id,
+                        vpc.tenant_organization_id,
+                        request_tenant,
+                    )));
+                }
             }
 
             // Extension services run on DPU agents; a zero-DPU host has no
@@ -974,6 +992,23 @@ pub async fn batch_allocate_instances(
                             vpc.id,
                             vpc.network_virtualization_type,
                             ns_id,
+                        )));
+                    }
+
+                    // Tenant scoping: a DPU instance must only land in its own
+                    // tenant's VPC. An empty tenant_organization_id is treated
+                    // as unscoped/shared and is not rejected here.
+                    let request_tenant = request.config.tenant.tenant_organization_id.as_str();
+                    if !vpc.tenant_organization_id.is_empty()
+                        && vpc.tenant_organization_id != request_tenant
+                    {
+                        return Err(CarbideError::FailedPrecondition(format!(
+                            "DPU-managed host {} cannot allocate an instance into VPC {} (via segment {}) owned by tenant `{}`; instance for tenant `{}` cannot allocate into another tenant's VPC",
+                            mh_snapshot.host_snapshot.id,
+                            vpc.id,
+                            ns_id,
+                            vpc.tenant_organization_id,
+                            request_tenant,
                         )));
                     }
                 }

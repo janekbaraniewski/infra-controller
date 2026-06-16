@@ -712,6 +712,19 @@ pub async fn set_vpc_id_and_can_stretch(
     Ok(())
 }
 
+pub async fn clear_vpc_id(
+    value: &NetworkSegment,
+    txn: &mut PgConnection,
+) -> Result<(), DatabaseError> {
+    let query = "UPDATE network_segments SET vpc_id=NULL, can_stretch=false WHERE id=$1";
+    sqlx::query(query)
+        .bind(value.id)
+        .execute(txn)
+        .await
+        .map_err(|e| DatabaseError::query(query, e))?;
+    Ok(())
+}
+
 pub async fn mark_as_deleted(
     value: &NetworkSegment,
     txn: &mut PgConnection,

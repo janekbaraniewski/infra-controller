@@ -158,6 +158,103 @@ pub(crate) async fn create(
     response
 }
 
+/// Binds (when `vpc_id` is present) or unbinds (when `vpc_id` is absent) a
+/// network segment to/from a VPC. Mirrors `create`'s VPC-capability check
+/// before binding.
+pub(crate) async fn set_vpc(
+    api: &Api,
+    request: Request<rpc::SetNetworkSegmentVpcRequest>,
+) -> Result<Response<rpc::NetworkSegment>, Status> {
+    crate::api::log_request_data(&request);
+
+    let rpc::SetNetworkSegmentVpcRequest {
+        network_segment_id,
+        vpc_id,
+        ..
+    } = request.into_inner();
+
+    let segment_id =
+        network_segment_id.ok_or_else(|| CarbideError::MissingArgument("network_segment_id"))?;
+
+    let mut txn = api.txn_begin().await?;
+
+    let mut segments = db::network_segment::find_by(
+        &mut txn,
+        ObjectColumnFilter::One(network_segment::IdColumn, &segment_id),
+        NetworkSegmentSearchConfig::default(),
+    )
+    .await?;
+
+    let segment = match segments.len() {
+        1 => segments.remove(0),
+        _ => {
+            return Err(CarbideError::NotFoundError {
+                kind: "network segment",
+                id: segment_id.to_string(),
+            }
+            .into());
+        }
+    };
+
+    match vpc_id {
+        // Bind: validate the target VPC exists and that its virtualization
+        // type supports the segment's type and address families, then bind.
+        Some(vpc_id) => {
+            let vpcs = db::vpc::find_by(
+                &mut txn,
+                ObjectColumnFilter::One(db::vpc::IdColumn, &vpc_id),
+            )
+            .await?;
+
+            let vpc = vpcs
+                .first()
+                .ok_or_else(|| CarbideError::internal(format!("VPC ID: {vpc_id} not found.")))?;
+
+            let virtualization_type = vpc.network_virtualization_type;
+
+            // Same capability gate as `create`, expressed against the
+            // already-persisted segment (segment-type binding + per-family
+            // prefix support).
+            virtualization_type
+                .ensure_supports_segment_type(segment.config.segment_type)
+                .map_err(CarbideError::from)?;
+            if segment.prefixes.iter().any(|p| p.prefix.is_ipv4()) {
+                virtualization_type
+                    .ensure_supports_ipv4_prefix()
+                    .map_err(CarbideError::from)?;
+            }
+            if segment.prefixes.iter().any(|p| p.prefix.is_ipv6()) {
+                virtualization_type
+                    .ensure_supports_ipv6_prefix()
+                    .map_err(CarbideError::from)?;
+            }
+
+            db::network_segment::set_vpc_id_and_can_stretch(&segment, &mut txn, vpc_id).await?;
+        }
+        // Unbind.
+        None => {
+            db::network_segment::clear_vpc_id(&segment, &mut txn).await?;
+        }
+    }
+
+    // Re-read so the response reflects the new vpc_id / can_stretch.
+    let mut updated = db::network_segment::find_by(
+        &mut txn,
+        ObjectColumnFilter::One(network_segment::IdColumn, &segment_id),
+        NetworkSegmentSearchConfig::default(),
+    )
+    .await?;
+
+    let updated = updated.pop().ok_or_else(|| CarbideError::NotFoundError {
+        kind: "network segment",
+        id: segment_id.to_string(),
+    })?;
+
+    let response = Ok(Response::new(updated.try_into()?));
+    txn.commit().await?;
+    response
+}
+
 pub(crate) async fn delete(
     api: &Api,
     request: Request<rpc::NetworkSegmentDeletionRequest>,
