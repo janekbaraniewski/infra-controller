@@ -69,6 +69,12 @@ function find_bootdisk() {
 		image_disk="/dev/nvme0n1"
 	elif [ -b /dev/sda ]; then
 		image_disk="/dev/sda"
+	# virtio block devices (e.g. QEMU/KVM guests, virtio-blk) expose
+	# /dev/vda rather than /dev/sda. Probe it so a virtio host without an
+	# explicit image_disk= on the cmdline images correctly instead of
+	# hard-failing as "Boot drive not detected".
+	elif [ -b /dev/vda ]; then
+		image_disk="/dev/vda"
 	else
 		echo "Boot drive not detected or specified" | tee $log_output
 		exit 1;

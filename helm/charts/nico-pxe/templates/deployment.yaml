@@ -95,5 +95,10 @@ spec:
             secretName: {{ include "nico-pxe.name" . }}-certificate
         {{- if .Values.bootArtifactContainers }}
         - name: boot-artifacts
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: nico-pxe-boot-artifacts
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         {{- end }}

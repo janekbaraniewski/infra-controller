@@ -72,6 +72,20 @@ bootArtifactContainers: []
 #     image: <your-registry>/machine-validation-config:<tag>
 #     command: ["sh", "-c", "cp -r /machine-validation /boot-artifacts/blobs/internal"]
 
+## Persistence for the boot-artifacts volume.
+## By default the boot-artifacts volume is an emptyDir, which is repopulated by
+## bootArtifactContainers on every pod start (and therefore LOST on a pod roll).
+## Enabling persistence backs the volume with a PersistentVolumeClaim so the
+## OS image blobs survive pod restarts. Kept disabled by default so existing
+## installs are unaffected.
+persistence:
+  enabled: false
+  size: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  ## storageClassName: ""  # unset = cluster default StorageClass
+  storageClassName: ""
+
 ## Boot artifact serving configuration
 bootArtifacts:
   servePath: /boot-artifacts
