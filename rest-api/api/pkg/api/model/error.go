@@ -7,6 +7,8 @@ package model
 const (
 	validationErrorValueRequired                  = "a value is required"
 	validationErrorInvalidUUID                    = "must be a valid UUID"
+	validationErrorInvalidURL                     = "must be a valid URL"
+	validationErrorInvalidRole                    = "must be a valid role"
 	validationErrorStringLength                   = "must be at least 2 characters and maximum 256 characters"
 	validationErrorDescriptionStringLength        = "maximum 1024 characters are allowed in description"
 	validationErrorMachineMaintenanceStringLength = "must be at least 5 characters and maximum 256 characters"

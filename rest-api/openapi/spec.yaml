@@ -97,6 +97,10 @@ tags:
     description: |-
       When the API service is configured in Service Account mode, API users can act as both Provider and Tenant. For service accounts, the Tenant entity is initialized as a
       privileged Tenant with `targetedInstanceCreation` capability enabled.
+  - name: Issuer
+    description: |-
+      Dynamic external OIDC issuer registrations. Provider Admins can register custom third-party IdPs at runtime by binding an issuer URL and JWKS URL to explicit claim mappings.
+      Dynamic registration only supports the `custom` issuer origin. KAS, SSA, and Keycloak issuers remain deployment-level configuration.
   - name: Infrastructure Provider
     description: |-
       Infrastructure Provider is the anchor entity for an organization that owns and manages Site resources.
@@ -12465,6 +12469,176 @@ paths:
                   name: reno-sre-access-v2
       tags:
         - SSH Key
+  '/v2/org/{org}/nico/issuer':
+    parameters:
+      - schema:
+          type: string
+        name: org
+        in: path
+        required: true
+        description: Name of the Provider Org
+    get:
+      summary: Retrieve all registered OIDC issuers
+      operationId: get-all-issuer
+      tags:
+        - Issuer
+      description: |-
+        Retrieve all dynamically registered custom OIDC issuer bindings.
+
+        Org must have an Infrastructure Provider entity. User must have authorization role with `PROVIDER_ADMIN` suffix.
+      responses:
+        '200':
+          description: Issuers retrieved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Issuer'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '500':
+          $ref: '#/components/responses/GenericHttpError'
+    post:
+      summary: Register an OIDC issuer
+      operationId: create-issuer
+      tags:
+        - Issuer
+      description: |-
+        Register a dynamic custom OIDC issuer binding. The issuer is persisted and installed into the live JWT origin map immediately. If the JWKS fetch fails, the issuer is returned with `Pending` status and will fail closed until a later JWKS refresh succeeds.
+
+        Org must have an Infrastructure Provider entity. User must have authorization role with `PROVIDER_ADMIN` suffix.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssuerCreateRequest'
+            examples:
+              Example 1:
+                value:
+                  name: acme-sso
+                  issuerUrl: https://login.acme.example.com
+                  jwksUrl: https://login.acme.example.com/.well-known/jwks.json
+                  audiences:
+                    - nico-api
+                  claimMappings:
+                    - orgName: tenant-acme
+                      orgDisplayName: ACME Tenant
+                      roles:
+                        - TENANT_ADMIN
+      responses:
+        '201':
+          description: Issuer registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issuer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '409':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/GenericHttpError'
+  '/v2/org/{org}/nico/issuer/{issuerId}':
+    parameters:
+      - schema:
+          type: string
+        name: org
+        in: path
+        required: true
+        description: Name of the Provider Org
+      - schema:
+          type: string
+          format: uuid
+        name: issuerId
+        in: path
+        required: true
+        description: ID of the Issuer
+    get:
+      summary: Retrieve a registered OIDC issuer
+      operationId: get-issuer
+      tags:
+        - Issuer
+      description: |-
+        Retrieve a dynamic custom OIDC issuer binding by ID.
+
+        Org must have an Infrastructure Provider entity. User must have authorization role with `PROVIDER_ADMIN` suffix.
+      responses:
+        '200':
+          description: Issuer retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issuer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/GenericHttpError'
+    patch:
+      summary: Update a registered OIDC issuer
+      operationId: update-issuer
+      tags:
+        - Issuer
+      description: |-
+        Update a dynamic custom OIDC issuer binding. `issuerUrl` and `origin` are immutable. Updating JWKS URL or claim mappings replaces the live runtime config with the persisted row immediately; if JWKS fetch fails, the issuer is returned with `Pending` status and fails closed.
+
+        Org must have an Infrastructure Provider entity. User must have authorization role with `PROVIDER_ADMIN` suffix.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssuerUpdateRequest'
+            examples:
+              Example 1:
+                value:
+                  jwksUrl: https://login.acme.example.com/rotated/jwks.json
+                  claimMappings:
+                    - orgName: tenant-acme
+                      orgDisplayName: ACME Tenant
+                      rolesAttribute: nico_roles
+      responses:
+        '200':
+          description: Issuer updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Issuer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/GenericHttpError'
+    delete:
+      summary: Delete a registered OIDC issuer
+      operationId: delete-issuer
+      tags:
+        - Issuer
+      description: |-
+        Soft-delete a dynamic custom OIDC issuer binding and remove it from the live JWT origin map.
+
+        Org must have an Infrastructure Provider entity. User must have authorization role with `PROVIDER_ADMIN` suffix.
+      responses:
+        '202':
+          description: Accepted
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/GenericHttpError'
   '/v2/org/{org}/nico/user/current':
     parameters:
       - schema:
@@ -13110,6 +13284,250 @@ components:
         macAddress:
           type: string
           description: BMC MAC address. Required for kind bmc-root, ignored for site-wide-root.
+    IssuerClaimMapping:
+      type: object
+      title: IssuerClaimMapping
+      description: |-
+        Mapping from custom issuer token claims to NICo organization and role data.
+        Each mapping must specify either `orgName` for a static organization or `orgAttribute` for a dynamic organization. Roles come from either the static `roles` list, `rolesAttribute`, or `isServiceAccount: true`.
+      properties:
+        orgAttribute:
+          type: string
+          description: JWT claim path to extract the organization name for dynamic mappings.
+        orgDisplayAttribute:
+          type: string
+          description: JWT claim path to extract the organization display name for dynamic mappings.
+        orgName:
+          type: string
+          description: Fixed organization name for static mappings.
+        orgDisplayName:
+          type: string
+          description: Display name for a static organization mapping.
+        rolesAttribute:
+          type: string
+          description: JWT claim path to extract role names.
+        roles:
+          type: array
+          description: Static NICo role names assigned for this mapping.
+          items:
+            type: string
+            enum:
+              - PROVIDER_ADMIN
+              - TENANT_ADMIN
+        isServiceAccount:
+          type: boolean
+          description: Whether this mapping authenticates tokens as service accounts. Only supported when the API runs in disconnected mode.
+          default: false
+      allOf:
+        - oneOf:
+            - required:
+                - orgName
+            - required:
+                - orgAttribute
+        - oneOf:
+            - required:
+                - roles
+              properties:
+                roles:
+                  minItems: 1
+            - required:
+                - rolesAttribute
+            - required:
+                - isServiceAccount
+              properties:
+                isServiceAccount:
+                  enum:
+                    - true
+    IssuerCreateRequest:
+      type: object
+      title: IssuerCreateRequest
+      description: Request to dynamically register a custom external OIDC issuer.
+      required:
+        - name
+        - issuerUrl
+        - jwksUrl
+        - claimMappings
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 256
+          description: Human-readable name for the issuer binding.
+        issuerUrl:
+          type: string
+          format: uri
+          description: Expected JWT `iss` claim value. Immutable after creation.
+        jwksUrl:
+          type: string
+          format: uri
+          description: JWKS endpoint used to verify token signatures.
+        origin:
+          type: string
+          enum:
+            - custom
+          default: custom
+          description: Dynamic registration supports only custom external issuer origins. Omit this field or set it to `custom`.
+        serviceAccount:
+          type: boolean
+          enum:
+            - false
+          default: false
+          description: Must be false for dynamic custom issuer registrations. Use `claimMappings[].isServiceAccount` for custom service-account mappings.
+        audiences:
+          type: array
+          description: Allowed token audiences. Token `aud` must contain at least one configured audience when this list is set.
+          items:
+            type: string
+        scopes:
+          type: array
+          description: Required token scopes. Token must contain all configured scopes when this list is set.
+          items:
+            type: string
+        jwksTimeout:
+          type: string
+          description: JWKS fetch timeout as a Go duration string, for example `5s` or `1m`.
+        claimMappings:
+          type: array
+          minItems: 1
+          description: Claim mappings for this custom issuer.
+          items:
+            $ref: '#/components/schemas/IssuerClaimMapping'
+        allowDuplicateStaticOrgNames:
+          type: boolean
+          default: false
+          description: Allows this issuer's static `orgName` mappings to duplicate static org names from other issuers.
+    IssuerUpdateRequest:
+      type: object
+      title: IssuerUpdateRequest
+      description: Request to update a dynamic custom issuer. `issuerUrl` and `origin` are immutable.
+      properties:
+        name:
+          type:
+            - string
+            - 'null'
+          minLength: 2
+          maxLength: 256
+          description: Human-readable name for the issuer binding.
+        jwksUrl:
+          type:
+            - string
+            - 'null'
+          format: uri
+          description: JWKS endpoint used to verify token signatures.
+        serviceAccount:
+          type:
+            - boolean
+            - 'null'
+          enum:
+            - false
+            - null
+          description: Must be false for dynamic custom issuer registrations. Use `claimMappings[].isServiceAccount` for custom service-account mappings.
+        audiences:
+          type: array
+          description: Replacement allowed audience list. Omit the field to leave it unchanged.
+          items:
+            type: string
+        scopes:
+          type: array
+          description: Replacement required scope list. Omit the field to leave it unchanged.
+          items:
+            type: string
+        jwksTimeout:
+          type:
+            - string
+            - 'null'
+          description: JWKS fetch timeout as a Go duration string, for example `5s` or `1m`.
+        claimMappings:
+          type: array
+          description: Replacement claim mappings. Omit the field to leave mappings unchanged.
+          items:
+            $ref: '#/components/schemas/IssuerClaimMapping'
+        allowDuplicateStaticOrgNames:
+          type:
+            - boolean
+            - 'null'
+          description: Allows this issuer's static `orgName` mappings to duplicate static org names from other issuers.
+    IssuerStatus:
+      type: string
+      title: IssuerStatus
+      description: Whether the issuer's JWKS was reachable during the most recent apply or boot seed attempt.
+      enum:
+        - Pending
+        - Ready
+    Issuer:
+      type: object
+      title: Issuer
+      description: Dynamically registered custom OIDC issuer binding.
+      required:
+        - id
+        - name
+        - issuerUrl
+        - jwksUrl
+        - origin
+        - serviceAccount
+        - allowDuplicateStaticOrgNames
+        - status
+        - created
+        - updated
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique UUID v4 identifier for the issuer binding.
+          readOnly: true
+        name:
+          type: string
+          description: Human-readable name for the issuer binding.
+        issuerUrl:
+          type: string
+          format: uri
+          description: Expected JWT `iss` claim value.
+        jwksUrl:
+          type: string
+          format: uri
+          description: JWKS endpoint used to verify token signatures.
+        origin:
+          type: string
+          enum:
+            - custom
+          description: Dynamic issuer origin. Dynamic registration supports only `custom`.
+        serviceAccount:
+          type: boolean
+          description: Always false for dynamic custom issuer registrations; service-account behavior is configured per claim mapping.
+        audiences:
+          type: array
+          description: Allowed token audiences.
+          items:
+            type: string
+        scopes:
+          type: array
+          description: Required token scopes.
+          items:
+            type: string
+        jwksTimeout:
+          type: string
+          description: JWKS fetch timeout as a Go duration string.
+        claimMappings:
+          type: array
+          description: Claim mappings for this custom issuer.
+          items:
+            $ref: '#/components/schemas/IssuerClaimMapping'
+        allowDuplicateStaticOrgNames:
+          type: boolean
+          description: Allows this issuer's static `orgName` mappings to duplicate static org names from other issuers.
+        status:
+          $ref: '#/components/schemas/IssuerStatus'
+          description: Current JWKS reachability status.
+        created:
+          type: string
+          format: date-time
+          description: Date/time when the issuer binding was created.
+          readOnly: true
+        updated:
+          type: string
+          format: date-time
+          description: Date/time when the issuer binding was last updated.
+          readOnly: true
     InfrastructureProvider:
       description: Infrastructure providers own and manage datacenters
       type: object

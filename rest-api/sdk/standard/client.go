@@ -77,6 +77,8 @@ type APIClient struct {
 
 	InstanceTypeAPI *InstanceTypeAPIService
 
+	IssuerAPI *IssuerAPIService
+
 	MachineAPI *MachineAPIService
 
 	MetadataAPI *MetadataAPIService
@@ -151,6 +153,7 @@ func NewAPIClient(cfg *Configuration) *APIClient {
 	c.InfrastructureProviderAPI = (*InfrastructureProviderAPIService)(&c.common)
 	c.InstanceAPI = (*InstanceAPIService)(&c.common)
 	c.InstanceTypeAPI = (*InstanceTypeAPIService)(&c.common)
+	c.IssuerAPI = (*IssuerAPIService)(&c.common)
 	c.MachineAPI = (*MachineAPIService)(&c.common)
 	c.MetadataAPI = (*MetadataAPIService)(&c.common)
 	c.NVLinkLogicalPartitionAPI = (*NVLinkLogicalPartitionAPIService)(&c.common)

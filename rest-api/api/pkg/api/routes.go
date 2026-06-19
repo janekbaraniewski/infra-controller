@@ -737,6 +737,32 @@ func NewAPIRoutes(dbSession *cdb.Session, tc tClient.Client, tnc tClient.Namespa
 			Method:  http.MethodDelete,
 			Handler: apiHandler.NewDeleteSSHKeyHandler(dbSession, tc, cfg),
 		},
+		// Issuer endpoints (dynamic OIDC issuer registration, Provider Admin only)
+		{
+			Path:    apiPathPrefix + "/issuer",
+			Method:  http.MethodPost,
+			Handler: apiHandler.NewCreateIssuerHandler(dbSession, cfg),
+		},
+		{
+			Path:    apiPathPrefix + "/issuer",
+			Method:  http.MethodGet,
+			Handler: apiHandler.NewGetAllIssuerHandler(dbSession, cfg),
+		},
+		{
+			Path:    apiPathPrefix + "/issuer/:id",
+			Method:  http.MethodGet,
+			Handler: apiHandler.NewGetIssuerHandler(dbSession, cfg),
+		},
+		{
+			Path:    apiPathPrefix + "/issuer/:id",
+			Method:  http.MethodPatch,
+			Handler: apiHandler.NewUpdateIssuerHandler(dbSession, cfg),
+		},
+		{
+			Path:    apiPathPrefix + "/issuer/:id",
+			Method:  http.MethodDelete,
+			Handler: apiHandler.NewDeleteIssuerHandler(dbSession, cfg),
+		},
 		// SSHKeyGroup endpoints
 		{
 			Path:    apiPathPrefix + "/sshkeygroup",
