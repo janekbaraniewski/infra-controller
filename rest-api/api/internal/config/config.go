@@ -430,31 +430,21 @@ func (c *Config) GetOrInitJWTOriginConfig() *cauth.JWTOriginConfig {
 			log.Panic().Err(err).Msg("Invalid issuers configuration")
 		}
 
-		// First pass: collect all static org names (lowercased) from all issuers
-		reservedOrgNames := make(map[string]bool)
-		for _, issuerCfg := range issuersConfig {
-			for _, mapping := range issuerCfg.ClaimMappings {
-				if mapping.OrgName != "" {
-					reservedOrgNames[strings.ToLower(mapping.OrgName)] = true
-				}
-			}
-		}
+		// First pass: reserve the static org names declared in the config file.
+		c.JwtOriginConfig.ReplaceReservedOrgs(c.configStaticOrgNames())
 
-		// Second pass: create jwksConfigs and assign reservedOrgNames only to those with dynamic mappings
+		// Second pass: create jwksConfigs. AddJwksConfig wires the shared
+		// reserved-org set into each config (only consulted for dynamic mappings).
 		for _, issuerCfg := range issuersConfig {
 			origin, _ := issuerCfg.GetOrigin() // Already validated
 			jwksTimeout, _ := issuerCfg.GetJWKSTimeout()
 
-			// Normalize org names in claim mappings and check for dynamic mappings
+			// Normalize org names in claim mappings
 			normalizedMappings := make([]cauth.ClaimMapping, len(issuerCfg.ClaimMappings))
-			hasDynamicMapping := false
 			for i, mapping := range issuerCfg.ClaimMappings {
 				normalizedMappings[i] = mapping
 				if mapping.OrgName != "" {
 					normalizedMappings[i].OrgName = strings.ToLower(mapping.OrgName)
-				}
-				if mapping.OrgAttribute != "" {
-					hasDynamicMapping = true
 				}
 			}
 
@@ -469,11 +459,6 @@ func (c *Config) GetOrInitJWTOriginConfig() *cauth.JWTOriginConfig {
 			)
 			jwksCfg.JWKSTimeout = jwksTimeout
 			jwksCfg.ClaimMappings = normalizedMappings
-
-			// Only assign reservedOrgNames to configs with dynamic claim mappings
-			if hasDynamicMapping {
-				jwksCfg.ReservedOrgNames = reservedOrgNames
-			}
 
 			c.JwtOriginConfig.AddJwksConfig(jwksCfg)
 		}
@@ -587,6 +572,12 @@ func (c *Config) ValidateIssuersConfig(issuers []IssuerConfig) error {
 		// keycloak, kas-ssa, and kas-legacy have their own predefined claim extraction logic
 		if len(issuer.ClaimMappings) > 0 && origin != cauth.TokenOriginCustom {
 			return fmt.Errorf("issuer %s: claimMappings are only allowed for custom origin issuers (origin: %s)", issuer.Name, origin)
+		}
+		if origin == cauth.TokenOriginCustom && len(issuer.ClaimMappings) == 0 {
+			return fmt.Errorf("issuer %s: claimMappings are required for custom origin issuers", issuer.Name)
+		}
+		if origin == cauth.TokenOriginCustom && issuer.ServiceAccount {
+			return fmt.Errorf("issuer %s: serviceAccount is not supported for custom origin issuers; use claimMappings[].isServiceAccount", issuer.Name)
 		}
 
 		// Validate JWKS timeout if specified

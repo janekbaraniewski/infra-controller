@@ -158,11 +158,40 @@ type JwksConfig struct {
 	// For custom issuers, use ClaimMapping.IsServiceAccount instead.
 	ServiceAccount bool
 
-	// ReservedOrgNames prevents dynamic org mappings from claiming statically-configured org names.
-	// Populated by nico-rest-api during initialization.
-	ReservedOrgNames map[string]bool
+	// ReservedOrgNames blocks dynamic org mappings from claiming reserved (statically-pinned) org names.
+	ReservedOrgNames *ReservedOrgSet
 
 	subjectPrefix string // SHA256(issuer)[0:10] - namespaces subject claims
+}
+
+// ReservedOrgSet is a thread-safe set of reserved org names.
+type ReservedOrgSet struct {
+	mu sync.RWMutex
+	m  map[string]bool
+}
+
+// NewReservedOrgSet returns an empty ReservedOrgSet.
+func NewReservedOrgSet() *ReservedOrgSet {
+	return &ReservedOrgSet{m: make(map[string]bool)}
+}
+
+// Has reports whether org is reserved.
+func (s *ReservedOrgSet) Has(org string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.m[org]
+}
+
+// Replace swaps the set's contents for m.
+func (s *ReservedOrgSet) Replace(m map[string]bool) {
+	next := make(map[string]bool, len(m))
+	for org, reserved := range m {
+		next[org] = reserved
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.m = next
 }
 
 // NewJwksConfig is a function that initializes and returns a configuration object for managing JWKS
@@ -253,6 +282,14 @@ func (jcfg *JwksConfig) shouldAllowJWKSUpdate() bool {
 
 // UpdateJWKS fetches and validates JWKS from the configured URL. Throttled to minUpdateInterval.
 func (jcfg *JwksConfig) UpdateJWKS() error {
+	return jcfg.UpdateJWKSWithContext(context.Background())
+}
+
+// UpdateJWKSWithContext fetches and validates JWKS, bounded by ctx and the configured JWKS timeout.
+func (jcfg *JwksConfig) UpdateJWKSWithContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if jcfg.URL == "" {
 		return core.ErrJWKSURLEmpty
 	}
@@ -268,7 +305,7 @@ func (jcfg *JwksConfig) UpdateJWKS() error {
 	urlCopy, timeout := jcfg.URL, jcfg.JWKSTimeout
 	jcfg.RUnlock()
 
-	jwks, err := core.NewJWKSFromURL(urlCopy, timeout)
+	jwks, err := core.NewJWKSFromURLWithContext(ctx, urlCopy, timeout)
 	if err != nil {
 		return errors.Wrapf(err, "failed to update JWKS from %s", urlCopy)
 	}
@@ -581,7 +618,7 @@ func (jcfg *JwksConfig) GetOrgDataFromClaim(claims jwt.MapClaims, reqOrgFromRout
 			continue
 		}
 
-		if cm.IsOrgDynamic() && jcfg.ReservedOrgNames != nil && jcfg.ReservedOrgNames[orgName] {
+		if cm.IsOrgDynamic() && jcfg.ReservedOrgNames != nil && jcfg.ReservedOrgNames.Has(orgName) {
 			return nil, false, core.ErrReservedOrgName
 		}
 

@@ -4,6 +4,7 @@
 package config
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -241,6 +242,29 @@ func TestJwksConfig_UpdateJWKs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJwksConfig_UpdateJWKSWithContextHonorsCallerCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	config := &JwksConfig{
+		URL:    server.URL,
+		Issuer: "test.example.com",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := config.UpdateJWKSWithContext(ctx)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context deadline exceeded")
+	assert.Nil(t, config.GetJWKS())
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
 }
 
 // TestJwksConfig_Concurrency tests thread safety of JWKS operations

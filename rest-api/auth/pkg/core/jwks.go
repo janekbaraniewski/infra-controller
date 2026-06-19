@@ -26,15 +26,24 @@ type JWKS struct {
 // NewJWKSFromURL creates a new set of JSON Web Keys given a URL using go-jose
 // If timeout is zero or negative, uses the default timeout of 5 seconds
 func NewJWKSFromURL(url string, timeout time.Duration) (*JWKS, error) {
+	return NewJWKSFromURLWithContext(context.Background(), url, timeout)
+}
+
+// NewJWKSFromURLWithContext creates a new set of JSON Web Keys and bounds the
+// request by both the caller context and the configured timeout.
+func NewJWKSFromURLWithContext(ctx context.Context, url string, timeout time.Duration) (*JWKS, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if timeout <= 0 {
 		timeout = DefaultJWKSTimeout
 	}
 
 	client := &http.Client{}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
 	if err != nil {
 		log.Error().Err(err).Msgf("failed to create request for JWKS URL: %s", url)
 		return nil, errors.Wrap(ErrJWKSFetch, err.Error())

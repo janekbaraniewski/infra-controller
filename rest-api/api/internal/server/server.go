@@ -4,6 +4,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -257,6 +258,14 @@ func InitAPIServer(cfg *config.Config, dbSession *cdb.Session, tc tsdkClient.Cli
 	jwtOriginConfig := cfg.GetOrInitJWTOriginConfig()
 	if jwtOriginConfig == nil {
 		log.Panic().Msg("JWT origin config not initialized, cannot initialize auth middleware")
+	}
+
+	// Seed DB-registered issuers into the live JWT origin map before auth routes serve traffic.
+	seedCtx, cancelSeed := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelSeed()
+	err := cfg.SeedIssuersFromDB(seedCtx, dbSession)
+	if err != nil {
+		log.Panic().Err(err).Msg("Failed to seed DB-registered issuers into JWT origin config")
 	}
 
 	keycloakConfig, _ := cfg.GetOrInitKeycloakConfig()

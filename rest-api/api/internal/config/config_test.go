@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	cauth "github.com/NVIDIA/infra-controller/rest-api/auth/pkg/config"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/viper"
@@ -57,6 +58,92 @@ func TestNewConfig(t *testing.T) {
 			defaultPath := ProjectRoot + "/config.yaml"
 
 			assert.Equal(t, defaultPath, got.GetPathToConfig())
+		})
+	}
+}
+
+func TestValidateIssuersConfig_CustomClaimMappingRules(t *testing.T) {
+	cfg := &Config{v: newViper()}
+
+	validCustom := IssuerConfig{
+		Name:   "external-idp",
+		Origin: cauth.TokenOriginCustom,
+		JWKS:   "https://idp.example.com/jwks",
+		Issuer: "https://idp.example.com",
+		ClaimMappings: []cauth.ClaimMapping{{
+			OrgName: "tenant-a",
+			Roles:   []string{"TENANT_ADMIN"},
+		}},
+	}
+
+	tests := []struct {
+		name    string
+		issuer  IssuerConfig
+		wantErr string
+	}{
+		{
+			name:   "custom issuer with mapping is valid",
+			issuer: validCustom,
+		},
+		{
+			name: "custom issuer without mappings is invalid",
+			issuer: IssuerConfig{
+				Name:   "external-idp",
+				Origin: cauth.TokenOriginCustom,
+				JWKS:   "https://idp.example.com/jwks",
+				Issuer: "https://idp.example.com",
+			},
+			wantErr: "claimMappings are required",
+		},
+		{
+			name: "non-custom issuer with mappings is invalid",
+			issuer: IssuerConfig{
+				Name:   "kas-idp",
+				Origin: cauth.TokenOriginKasLegacy,
+				JWKS:   "https://idp.example.com/jwks",
+				Issuer: "https://idp.example.com",
+				ClaimMappings: []cauth.ClaimMapping{{
+					OrgName: "tenant-a",
+					Roles:   []string{"TENANT_ADMIN"},
+				}},
+			},
+			wantErr: "claimMappings are only allowed for custom origin issuers",
+		},
+		{
+			name: "custom issuer rejects issuer-level service account",
+			issuer: IssuerConfig{
+				Name:           "external-idp",
+				Origin:         cauth.TokenOriginCustom,
+				JWKS:           "https://idp.example.com/jwks",
+				Issuer:         "https://idp.example.com",
+				ServiceAccount: true,
+				ClaimMappings: []cauth.ClaimMapping{{
+					OrgName: "tenant-a",
+					Roles:   []string{"TENANT_ADMIN"},
+				}},
+			},
+			wantErr: "serviceAccount is not supported for custom origin issuers",
+		},
+		{
+			name: "non-custom issuer without mappings remains valid",
+			issuer: IssuerConfig{
+				Name:   "kas-idp",
+				Origin: cauth.TokenOriginKasLegacy,
+				JWKS:   "https://idp.example.com/jwks",
+				Issuer: "https://idp.example.com",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := cfg.ValidateIssuersConfig([]IssuerConfig{tt.issuer})
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
 }

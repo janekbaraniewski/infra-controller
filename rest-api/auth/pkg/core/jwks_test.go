@@ -4,6 +4,7 @@
 package core
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"net/http"
@@ -237,6 +238,24 @@ func TestNewJWKSFromURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewJWKSFromURLWithContextHonorsCallerCancellation(t *testing.T) {
+	testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		<-req.Context().Done()
+	}))
+	defer testServer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	jwks, err := NewJWKSFromURLWithContext(ctx, testServer.URL, 5*time.Second)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context deadline exceeded")
+	assert.Nil(t, jwks)
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
 }
 
 func TestJWKS_GetKIDPublicKeyMap_EmptyKeys(t *testing.T) {

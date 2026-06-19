@@ -32,16 +32,18 @@ type TokenProcessor interface {
 
 // JWTOriginConfig holds configuration for JWT origins with multiple JWKS configs and handlers
 type JWTOriginConfig struct {
-	sync.RWMutex                           // protects concurrent access to configs and handlers maps
-	configs      map[string]*JwksConfig    // map issuer -> JWKSConfig
-	processors   map[string]TokenProcessor // map TokenOrigin -> TokenProcessor
+	sync.RWMutex                               // protects concurrent access to configs and handlers maps
+	configs          map[string]*JwksConfig    // map issuer -> JWKSConfig
+	processors       map[string]TokenProcessor // map TokenOrigin -> TokenProcessor
+	reservedOrgNames *ReservedOrgSet           // shared reserved-org set wired into dynamic JwksConfigs
 }
 
 // NewJWTOriginConfig initializes and returns a configuration object with empty maps
 func NewJWTOriginConfig() *JWTOriginConfig {
 	return &JWTOriginConfig{
-		configs:    make(map[string]*JwksConfig),
-		processors: make(map[string]TokenProcessor),
+		configs:          make(map[string]*JwksConfig),
+		processors:       make(map[string]TokenProcessor),
+		reservedOrgNames: NewReservedOrgSet(),
 	}
 }
 
@@ -50,6 +52,7 @@ func NewJWTOriginConfig() *JWTOriginConfig {
 func (jc *JWTOriginConfig) AddJwksConfig(cfg *JwksConfig) {
 	jc.Lock()
 	defer jc.Unlock()
+	cfg.ReservedOrgNames = jc.reservedOrgNames // shared; only consulted for dynamic mappings
 	jc.configs[cfg.Issuer] = cfg
 }
 
@@ -137,6 +140,13 @@ func (jc *JWTOriginConfig) GetAllConfigs() map[string]*JwksConfig {
 	jc.RLock()
 	defer jc.RUnlock()
 	return jc.configs
+}
+
+// ReplaceReservedOrgs swaps the contents of the shared reserved-org set wired
+// into every JwksConfig. The set is created once in NewJWTOriginConfig and locks
+// itself, so callers mutate it in place rather than reassigning the field.
+func (jc *JWTOriginConfig) ReplaceReservedOrgs(orgs map[string]bool) {
+	jc.reservedOrgNames.Replace(orgs)
 }
 
 // UpdateAllJWKS updates the JWKs for all configurations in the map
